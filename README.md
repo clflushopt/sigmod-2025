@@ -1,4 +1,137 @@
-# SIGMOD Contest 2025
+# SIGMOD Contest 2025 (Solved)
+
+This repository contains my solutions for the SIGMOD Contest 2025.
+
+## Changes
+
+This is a list of changes (divergences) from the main challenge repository.
+
+- Add hardware definition file for the machine I used.
+- Running `clang-format` on all files.
+- Fixed issue due to a missing include for `hardware.h` (replaced by `hardware__talos.h`).
+
+## Baseline
+
+```
+$ time ./build/run plans.json
+Query 1a >>              Runtime: 1837 ms - Result correct: true
+Query 1b >>              Runtime: 963 ms - Result correct: true
+Query 1c >>              Runtime: 354 ms - Result correct: true
+Query 1d >>              Runtime: 1374 ms - Result correct: true
+Query 2a >>              Runtime: 2593 ms - Result correct: true
+Query 2b >>              Runtime: 2383 ms - Result correct: true
+Query 2c >>              Runtime: 2315 ms - Result correct: true
+Query 2d >>              Runtime: 2842 ms - Result correct: true
+Query 3a >>              Runtime: 1255 ms - Result correct: true
+Query 3b >>              Runtime: 816 ms - Result correct: true
+Query 3c >>              Runtime: 1658 ms - Result correct: true
+Query 4a >>              Runtime: 1434 ms - Result correct: true
+Query 4b >>              Runtime: 858 ms - Result correct: true
+Query 4c >>              Runtime: 1767 ms - Result correct: true
+Query 5a >>              Runtime: 543 ms - Result correct: true
+Query 5b >>              Runtime: 341 ms - Result correct: true
+Query 5c >>              Runtime: 1234 ms - Result correct: true
+Query 6a >>              Runtime: 14609 ms - Result correct: true
+Query 6b >>              Runtime: 12257 ms - Result correct: true
+Query 6c >>              Runtime: 12120 ms - Result correct: true
+Query 6d >>              Runtime: 13744 ms - Result correct: true
+Query 6e >>              Runtime: 13765 ms - Result correct: true
+Query 6f >>              Runtime: 15426 ms - Result correct: true
+Query 7a >>              Runtime: 13434 ms - Result correct: true
+Query 7b >>              Runtime: 11958 ms - Result correct: true
+Query 7c >>              Runtime: 13523 ms - Result correct: true
+Query 8a >>              Runtime: 2342 ms - Result correct: true
+Query 8b >>              Runtime: 651 ms - Result correct: true
+Query 8c >>              Runtime: 16555 ms - Result correct: true
+Query 8d >>              Runtime: 15376 ms - Result correct: true
+Query 9a >>              Runtime: 2771 ms - Result correct: true
+Query 9b >>              Runtime: 2303 ms - Result correct: true
+Query 9c >>              Runtime: 4154 ms - Result correct: true
+Query 9d >>              Runtime: 4902 ms - Result correct: true
+Query 10a >>             Runtime: 2480 ms - Result correct: true
+Query 10b >>             Runtime: 2673 ms - Result correct: true
+Query 10c >>             Runtime: 3619 ms - Result correct: true
+Query 11a >>             Runtime: 1574 ms - Result correct: true
+Query 11b >>             Runtime: 888 ms - Result correct: true
+Query 11c >>             Runtime: 2394 ms - Result correct: true
+Query 11d >>             Runtime: 2757 ms - Result correct: true
+Query 12a >>             Runtime: 999 ms - Result correct: true
+Query 12b >>             Runtime: 5668 ms - Result correct: true
+Query 12c >>             Runtime: 1567 ms - Result correct: true
+Query 13a >>             Runtime: 7351 ms - Result correct: true
+Query 13b >>             Runtime: 5019 ms - Result correct: true
+Query 13c >>             Runtime: 5113 ms - Result correct: true
+Query 13d >>             Runtime: 8276 ms - Result correct: true
+Query 14a >>             Runtime: 1252 ms - Result correct: true
+Query 14b >>             Runtime: 935 ms - Result correct: true
+Query 14c >>             Runtime: 1819 ms - Result correct: true
+Query 15a >>             Runtime: 1990 ms - Result correct: true
+Query 15b >>             Runtime: 1445 ms - Result correct: true
+Query 15c >>             Runtime: 2683 ms - Result correct: true
+Query 15d >>             Runtime: 2726 ms - Result correct: true
+Query 16a >>             Runtime: 14995 ms - Result correct: true
+Query 16b >>             Runtime: 17242 ms - Result correct: true
+Query 16c >>             Runtime: 14447 ms - Result correct: true
+Query 16d >>             Runtime: 14539 ms - Result correct: true
+Query 17a >>             Runtime: 14593 ms - Result correct: true
+Query 17b >>             Runtime: 14245 ms - Result correct: true
+Query 17c >>             Runtime: 13983 ms - Result correct: true
+Query 17d >>             Runtime: 13948 ms - Result correct: true
+Query 17e >>             Runtime: 15813 ms - Result correct: true
+Query 17f >>             Runtime: 14637 ms - Result correct: true
+Query 18a >>             Runtime: 7003 ms - Result correct: true
+Query 18b >>             Runtime: 1503 ms - Result correct: true
+Query 18c >>             Runtime: 2868 ms - Result correct: true
+Query 19a >>             Runtime: 2643 ms - Result correct: true
+Query 19b >>             Runtime: 1890 ms - Result correct: true
+Query 19c >>             Runtime: 3405 ms - Result correct: true
+Query 19d >>             Runtime: 8991 ms - Result correct: true
+Query 20a >>             Runtime: 14085 ms - Result correct: true
+Query 20b >>             Runtime: 12573 ms - Result correct: true
+Query 20c >>             Runtime: 14521 ms - Result correct: true
+Query 21a >>             Runtime: 2195 ms - Result correct: true
+Query 21b >>             Runtime: 1721 ms - Result correct: true
+Query 21c >>             Runtime: 2156 ms - Result correct: true
+Query 22a >>             Runtime: 1800 ms - Result correct: true
+Query 22b >>             Runtime: 1665 ms - Result correct: true
+Query 22c >>             Runtime: 1994 ms - Result correct: true
+Query 22d >>             Runtime: 2303 ms - Result correct: true
+Query 23a >>             Runtime: 2162 ms - Result correct: true
+Query 23b >>             Runtime: 2215 ms - Result correct: true
+Query 23c >>             Runtime: 2387 ms - Result correct: true
+Query 24a >>             Runtime: 3494 ms - Result correct: true
+Query 24b >>             Runtime: 3210 ms - Result correct: true
+Query 25a >>             Runtime: 3093 ms - Result correct: true
+Query 25b >>             Runtime: 2062 ms - Result correct: true
+Query 25c >>             Runtime: 3334 ms - Result correct: true
+Query 26a >>             Runtime: 14454 ms - Result correct: true
+Query 26b >>             Runtime: 14347 ms - Result correct: true
+Query 26c >>             Runtime: 15066 ms - Result correct: true
+Query 27a >>             Runtime: 2135 ms - Result correct: true
+Query 27b >>             Runtime: 857 ms - Result correct: true
+Query 27c >>             Runtime: 2141 ms - Result correct: true
+Query 28a >>             Runtime: 2214 ms - Result correct: true
+Query 28b >>             Runtime: 1547 ms - Result correct: true
+Query 28c >>             Runtime: 1898 ms - Result correct: true
+Query 29a >>             Runtime: 3340 ms - Result correct: true
+Query 29b >>             Runtime: 3371 ms - Result correct: true
+Query 29c >>             Runtime: 4896 ms - Result correct: true
+Query 30a >>             Runtime: 2837 ms - Result correct: true
+Query 30b >>             Runtime: 1989 ms - Result correct: true
+Query 30c >>             Runtime: 3487 ms - Result correct: true
+Query 31a >>             Runtime: 3630 ms - Result correct: true
+Query 31b >>             Runtime: 1943 ms - Result correct: true
+Query 31c >>             Runtime: 4906 ms - Result correct: true
+Query 32a >>             Runtime: 3207 ms - Result correct: true
+Query 32b >>             Runtime: 3278 ms - Result correct: true
+Query 33a >>             Runtime: 3654 ms - Result correct: true
+Query 33b >>             Runtime: 3016 ms - Result correct: true
+Query 33c >>             Runtime: 4185 ms - Result correct: true
+
+real    11m7.193s
+user    12m19.108s
+sys     2m47.299s
+```
 
 ## Task
 
@@ -135,7 +268,7 @@ Now, you can run the tests:
 ```
 > [!TIP]
 > If you want to use `Ninja Multi-Config` as the generator. The commands will look like:
-> 
+>
 >```bash
 > cmake -S . -B build -Wno-dev -G "Ninja Multi-Config"
 > cmake --build build --config Release -- -j $(nproc)
