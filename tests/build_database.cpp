@@ -46,8 +46,7 @@ int main(int argc, char* argv[]) {
     };
 
     for (auto& table: table_names) {
-        result =
-            conn.Query(fmt::format("COPY {0} FROM 'imdb/{0}.csv' (ESCAPE '\\');", table));
+        result = conn.Query(fmt::format("COPY {0} FROM 'imdb/{0}.csv' (ESCAPE '\\');", table));
         if (result->HasError()) {
             fmt::println("Error: {}", result->GetError());
         } else {

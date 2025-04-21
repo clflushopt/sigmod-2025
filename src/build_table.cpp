@@ -314,16 +314,16 @@ Table Table::from_columnar(const ColumnarTable& table) {
     std::vector<std::vector<Data>> results(table.num_rows,
         std::vector<Data>(table.columns.size(), std::monostate{}));
     std::vector<DataType>          types(table.columns.size());
-    auto task = [&](size_t begin, size_t end) {
+    auto                           task = [&](size_t begin, size_t end) {
         for (size_t column_idx = begin; column_idx < end; ++column_idx) {
-            auto& column = table.columns[column_idx];
+            auto& column      = table.columns[column_idx];
             types[column_idx] = column.type;
-            size_t row_idx = 0;
+            size_t row_idx    = 0;
             for (auto* page:
                 column.pages | views::transform([](auto* page) { return page->data; })) {
                 switch (column.type) {
                 case DataType::INT32: {
-                    auto  num_rows   = *reinterpret_cast<uint16_t*>(page);
+                    auto  num_rows = *reinterpret_cast<uint16_t*>(page);
                     auto* data_begin = reinterpret_cast<int32_t*>(page + 4);
                     auto* bitmap =
                         reinterpret_cast<uint8_t*>(page + PAGE_SIZE - (num_rows + 7) / 8);
@@ -342,7 +342,7 @@ Table Table::from_columnar(const ColumnarTable& table) {
                     break;
                 }
                 case DataType::INT64: {
-                    auto  num_rows   = *reinterpret_cast<uint16_t*>(page);
+                    auto  num_rows = *reinterpret_cast<uint16_t*>(page);
                     auto* data_begin = reinterpret_cast<int64_t*>(page + 8);
                     auto* bitmap =
                         reinterpret_cast<uint8_t*>(page + PAGE_SIZE - (num_rows + 7) / 8);
@@ -361,7 +361,7 @@ Table Table::from_columnar(const ColumnarTable& table) {
                     break;
                 }
                 case DataType::FP64: {
-                    auto  num_rows   = *reinterpret_cast<uint16_t*>(page);
+                    auto  num_rows = *reinterpret_cast<uint16_t*>(page);
                     auto* data_begin = reinterpret_cast<double*>(page + 8);
                     auto* bitmap =
                         reinterpret_cast<uint8_t*>(page + PAGE_SIZE - (num_rows + 7) / 8);
@@ -382,7 +382,7 @@ Table Table::from_columnar(const ColumnarTable& table) {
                 case DataType::VARCHAR: {
                     auto num_rows = *reinterpret_cast<uint16_t*>(page);
                     if (num_rows == 0xffff) {
-                        auto        num_chars  = *reinterpret_cast<uint16_t*>(page + 2);
+                        auto        num_chars = *reinterpret_cast<uint16_t*>(page + 2);
                         auto*       data_begin = reinterpret_cast<char*>(page + 4);
                         std::string value{data_begin, data_begin + num_chars};
                         if (row_idx >= table.num_rows) {
@@ -390,13 +390,15 @@ Table Table::from_columnar(const ColumnarTable& table) {
                         }
                         results[row_idx++][column_idx].emplace<std::string>(std::move(value));
                     } else if (num_rows == 0xfffe) {
-                        auto  num_chars  = *reinterpret_cast<uint16_t*>(page + 2);
+                        auto  num_chars = *reinterpret_cast<uint16_t*>(page + 2);
                         auto* data_begin = reinterpret_cast<char*>(page + 4);
                         std::visit(
                             [data_begin, num_chars](auto& value) {
                                 using T = std::decay_t<decltype(value)>;
                                 if constexpr (std::is_same_v<T, std::string>) {
-                                    value.insert(value.end(), data_begin, data_begin + num_chars);
+                                    value.insert(value.end(),
+                                        data_begin,
+                                        data_begin + num_chars);
                                 } else {
                                     throw std::runtime_error(
                                         "long string page 0xfffe must follows a string");
@@ -406,7 +408,7 @@ Table Table::from_columnar(const ColumnarTable& table) {
                     } else {
                         auto  num_non_null = *reinterpret_cast<uint16_t*>(page + 2);
                         auto* offset_begin = reinterpret_cast<uint16_t*>(page + 4);
-                        auto* data_begin   = reinterpret_cast<char*>(page + 4 + num_non_null * 2);
+                        auto* data_begin = reinterpret_cast<char*>(page + 4 + num_non_null * 2);
                         auto* string_begin = data_begin;
                         auto* bitmap =
                             reinterpret_cast<uint8_t*>(page + PAGE_SIZE - (num_rows + 7) / 8);
@@ -419,7 +421,8 @@ Table Table::from_columnar(const ColumnarTable& table) {
                                 if (row_idx >= table.num_rows) {
                                     throw std::runtime_error("row_idx");
                                 }
-                                results[row_idx++][column_idx].emplace<std::string>(std::move(value));
+                                results[row_idx++][column_idx].emplace<std::string>(
+                                    std::move(value));
                             } else {
                                 ++row_idx;
                             }

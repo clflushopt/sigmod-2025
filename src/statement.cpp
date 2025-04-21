@@ -115,15 +115,15 @@ std::vector<uint8_t> Comparison::eval(const std::vector<const InnerColumnBase*>&
         } else {
             auto& comp_value = std::get<std::string>(value);
             switch (op) {
-            case EQ:          return column->equal(comp_value);
-            case NEQ:         return column->not_equal(comp_value);
-            case LT:          return column->less(comp_value);
-            case GT:          return column->greater(comp_value);
-            case LEQ:         return column->less_equal(comp_value);
-            case GEQ:         return column->greater_equal(comp_value);
-            case LIKE:        return column->like(comp_value);
-            case NOT_LIKE:    return column->not_like(comp_value);
-            default:          unreachable();
+            case EQ:       return column->equal(comp_value);
+            case NEQ:      return column->not_equal(comp_value);
+            case LT:       return column->less(comp_value);
+            case GT:       return column->greater(comp_value);
+            case LEQ:      return column->less_equal(comp_value);
+            case GEQ:      return column->greater_equal(comp_value);
+            case LIKE:     return column->like(comp_value);
+            case NOT_LIKE: return column->not_like(comp_value);
+            default:       unreachable();
             }
         }
         break;

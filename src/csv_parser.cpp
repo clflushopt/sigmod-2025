@@ -55,7 +55,7 @@ CSVParser::Error CSVParser::execute(const char* buffer, size_t len) {
         this->col_idx_ = 0;
         ++this->row_idx_;
         this->after_record_sep_ = true;
-        this->newlining_ = false;
+        this->newlining_        = false;
     }
     for (; i < len; ++i) {
         bool set_after_record_sep = false;

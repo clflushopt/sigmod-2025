@@ -1207,7 +1207,7 @@ bool compare(duckdb::MaterializedQueryResult& duckdb_results, const ColumnarTabl
     sort(duckdb_table);
     sort(result_table.table());
     std::vector<uint8_t> booleans(num_rows, 0);
-    auto task = [&](size_t begin, size_t end) {
+    auto                 task = [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
             booleans[i] = uint8_t(result_table.table()[i] == duckdb_table[i]);
         }
@@ -1221,12 +1221,13 @@ bool compare(duckdb::MaterializedQueryResult& duckdb_results, const ColumnarTabl
     return true;
 }
 
-std::pair<bool, size_t> run(const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables,
-    std::string_view                                                      name,
-    std::string                                                           sql,
-    const json&                                                           plan_json,
-    duckdb::Connection&                                                   conn,
-    [[maybe_unused]] void*                                                context) {
+std::pair<bool, size_t> run(
+    const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables,
+    std::string_view                                                 name,
+    std::string                                                      sql,
+    const json&                                                      plan_json,
+    duckdb::Connection&                                              conn,
+    [[maybe_unused]] void*                                           context) {
     ParsedSQL parsed_sql(column_to_tables);
     parsed_sql.parse_sql(sql, name);
     auto plan = load_join_pipeline(plan_json["Plan"], parsed_sql);
@@ -1237,28 +1238,32 @@ std::pair<bool, size_t> run(const std::unordered_map<std::string, std::vector<st
 
     auto executed_sql = parsed_sql.executed_sql(sql);
     // fmt::println("{}", executed_sql);
-    auto       result = conn.Query(executed_sql);
+    auto result = conn.Query(executed_sql);
 
     const auto compare_result = compare(*result, results);
     fmt::println("Query {} >> \t\t Runtime: {} ms - Result correct: {}",
         name,
         std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(),
         compare_result);
-   
-    return {compare_result, std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()};
+
+    return {compare_result,
+        std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()};
 }
 
 int main(int argc, char* argv[]) {
-    namespace views = ranges::views;
+    namespace views            = ranges::views;
     const auto output_filename = std::string{"BENCHMARK_RUNTIME.txt"};
 
     try {
         if (argc < 2) {
-            // We accept several plans to run. For now, the last one of them might be `output_filename`  in which
-            // case we write the runtime result to this file.
-            fmt::println(stderr, "{} <path to plans> [<name of selected sql>] [{}]", argv[0], output_filename);
+            // We accept several plans to run. For now, the last one of them might be
+            // `output_filename`  in which case we write the runtime result to this file.
+            fmt::println(stderr,
+                "{} <path to plans> [<name of selected sql>] [{}]",
+                argv[0],
+                output_filename);
         }
-  
+
         // column to table map
         std::unordered_map<std::string, std::vector<std::string>> column_to_tables;
 
@@ -1278,15 +1283,17 @@ int main(int argc, char* argv[]) {
 
         // Build context. Context creation time is included in the measured runtime.
         const auto start_context = std::chrono::steady_clock::now();
-        auto* context = Contest::build_context();
-        const auto end_context = std::chrono::steady_clock::now();
-        runtime += std::chrono::duration_cast<std::chrono::microseconds>(end_context - start_context).count();
+        auto*      context       = Contest::build_context();
+        const auto end_context   = std::chrono::steady_clock::now();
+        runtime +=
+            std::chrono::duration_cast<std::chrono::microseconds>(end_context - start_context)
+                .count();
 
         // load plan json
         namespace fs = std::filesystem;
 
         auto write_output_file = false;
-        auto selected_plans = std::unordered_set<std::string>{};
+        auto selected_plans    = std::unordered_set<std::string>{};
         for (auto argument_id = int{0}; argument_id < argc; ++argument_id) {
             if (argument_id == argc - 1 && std::string{argv[argument_id]} == output_filename) {
                 write_output_file = true;
@@ -1300,18 +1307,19 @@ int main(int argc, char* argv[]) {
         auto sql_directory = query_plans["sql_directory"].get<std::string>();
         auto names         = query_plans["names"].get<std::vector<std::string>>();
         auto plans         = query_plans["plans"];
-  
+
         auto all_queries_succeeded = true;
         using namespace duckdb;
         DuckDB     db("imdb.db");
         Connection conn(db);
         for (const auto& [name, plan_json]: views::zip(names, plans)) {
-            if ((argc < 3 || (selected_plans.find(name) != selected_plans.end())) ||
-                (argc == 3 && std::string{argv[2]} == output_filename)) {
+            if ((argc < 3 || (selected_plans.find(name) != selected_plans.end()))
+                || (argc == 3 && std::string{argv[2]} == output_filename)) {
                 auto sql_path = fs::path(sql_directory) / fmt::format("{}.sql", name);
                 auto sql      = read_file(sql_path);
-                const auto [result_is_correct, query_runtime] = run(column_to_tables, name, std::move(sql), plan_json, conn, context);
-                runtime += query_runtime;
+                const auto [result_is_correct, query_runtime] =
+                    run(column_to_tables, name, std::move(sql), plan_json, conn, context);
+                runtime               += query_runtime;
                 all_queries_succeeded &= result_is_correct;
             }
         }
@@ -1325,7 +1333,7 @@ int main(int argc, char* argv[]) {
         // destroy context
         Contest::destroy_context(context);
 
-        return !all_queries_succeeded;  // Get 0 for success, 1 for failure.
+        return !all_queries_succeeded; // Get 0 for success, 1 for failure.
     } catch (std::exception& e) {
         fmt::println(stderr, "Error: {}", e.what());
         exit(EXIT_FAILURE);
