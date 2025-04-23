@@ -1,4 +1,7 @@
+#include <cmath>
+#include <cstdint>
 #include <hardware__talos.h>
+#include <logger.h>
 #include <plan.h>
 #include <table.h>
 
@@ -20,12 +23,42 @@ struct JoinAlgorithm {
     auto run() {
         namespace views = ranges::views;
         std::unordered_map<T, std::vector<size_t>> hash_table;
+        // Log the size of the left and right tables and the number of columns
+        // being joined.
+
+        LOG_INFO(fmt::format("Right table size: {} rows, {} columns",
+            right.size(),
+            right.size() > 0 ? right[0].size() : 0));
+
+        LOG_INFO(fmt::format("Left table size: {} rows, {} columns",
+            left.size(),
+            left.size() > 0 ? left[0].size() : 0));
+
+        LOG_INFO(fmt::format("Left column: {}", left_col));
+        LOG_INFO(fmt::format("Right column: {}", right_col));
+
         if (build_left) {
+            // Build phase.
             for (auto&& [idx, record]: left | views::enumerate) {
+                // This is just a type-matching visitor except it's limited to
+                // the template type.
+                //
+                // Key is the row, column entry. The row being `record` we
+                // are currently processing, and the column being indexed
+                // by `left_col`.
                 std::visit(
                     [&hash_table, idx = idx](const auto& key) {
+                        // Here we capture the type of the entry (this is just one)
                         using Tk = std::decay_t<decltype(key)>;
+                        // If the type of the entry is the same as the template
+                        // type, we can insert it into the hash table.
                         if constexpr (std::is_same_v<Tk, T>) {
+                            // If the key is not in the hash table, we insert it
+                            // with the current index. Otherwise, we just push
+                            // the index into the vector of indices.
+                            //
+                            // The end of the build phase yields a mapping of values
+                            // and their corresponding indices in the left table.
                             if (auto itr = hash_table.find(key); itr == hash_table.end()) {
                                 hash_table.emplace(key, std::vector<size_t>(1, idx));
                             } else {
@@ -37,7 +70,10 @@ struct JoinAlgorithm {
                     },
                     record[left_col]);
             }
+            // Probe phase.
             for (auto& right_record: right) {
+                // Again, iterate on every record and this time our typed-visitor
+                // emplaces the records in the results vector.
                 std::visit(
                     [&](const auto& key) {
                         using Tk = std::decay_t<decltype(key)>;

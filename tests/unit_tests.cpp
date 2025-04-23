@@ -1,5 +1,8 @@
+#include "hardware.h"
+#include "logger.h"
 #include <catch2/catch_test_macros.hpp>
 
+#include <german_table.h>
 #include <plan.h>
 #include <table.h>
 
@@ -467,4 +470,17 @@ TEST_CASE("Build on right", "[join]") {
     };
     sort(result_table.table());
     REQUIRE(result_table.table() == ground_truth);
+}
+
+TEST_CASE("Asserts hardware support for CRC32/RTDSCP instruction") {
+    REQUIRE(hasSse42());
+    REQUIRE(hasRdtscp());
+}
+
+TEST_CASE("Hash32") {
+    uint32_t seed = 0xcafebabe;
+    for (int val = 0; val < 0xabcd; val++) {
+        auto hash = hash32(seed, val);
+        CHECK(hash != 0);
+    }
 }

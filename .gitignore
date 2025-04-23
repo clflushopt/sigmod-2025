@@ -7,3 +7,5 @@
 /TPC-H*
 /job-sample
 /.cache
+.kateproject
+.kateproject.build
