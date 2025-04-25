@@ -1,7 +1,8 @@
 #include "hardware.h"
-#include "logger.h"
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <german_table.h>
 #include <plan.h>
 #include <table.h>
@@ -473,14 +474,31 @@ TEST_CASE("Build on right", "[join]") {
 }
 
 TEST_CASE("Asserts hardware support for CRC32/RTDSCP instruction") {
-    REQUIRE(hasSse42());
-    REQUIRE(hasRdtscp());
+    REQUIRE(has_sse42());
+    REQUIRE(has_rdtscp());
 }
 
-TEST_CASE("Hash32") {
+TEST_CASE("Hash32 is more or less unifom") {
     uint32_t seed = 0xcafebabe;
+
+    uint32_t hashes[0x10000];
+
+    // We want to make sure that sequential values don't end up bucketized
+    // together.
     for (int val = 0; val < 0xabcd; val++) {
         auto hash = hash32(seed, val);
         CHECK(hash != 0);
+        hashes[val] = hash;
+    }
+
+    // Compute a histogram of the hashes.
+    std::unordered_map<uint32_t, uint32_t> histogram;
+    for (int val = 0; val < 0xabcd; val++) {
+        auto hash = hashes[val];
+        histogram[hash]++;
+    }
+    // Check that the histogram is reasonably uniform.
+    for (auto& [hash, count]: histogram) {
+        CHECK(count == 1);
     }
 }

@@ -1,17 +1,29 @@
 #include <cmath>
 #include <cstdint>
-#include <hardware__talos.h>
+
+#include <vector>
+#include <unordered_map>
+#include <variant>
+#include <utility>
+
 #include <logger.h>
 #include <plan.h>
 #include <table.h>
+#include <german_table.h>
+#include <hardware__talos.h>
 
 namespace Contest {
+
+enum class HashJoinAlgorithm {
+    Baseline,
+    German
+};
 
 using ExecuteResult = std::vector<std::vector<Data>>;
 
 ExecuteResult execute_impl(const Plan& plan, size_t node_idx);
 
-struct JoinAlgorithm {
+struct BaselineJoinAlgorithm {
     bool                                             build_left;
     ExecuteResult&                                   left;
     ExecuteResult&                                   right;
@@ -23,19 +35,6 @@ struct JoinAlgorithm {
     auto run() {
         namespace views = ranges::views;
         std::unordered_map<T, std::vector<size_t>> hash_table;
-        // Log the size of the left and right tables and the number of columns
-        // being joined.
-
-        LOG_INFO(fmt::format("Right table size: {} rows, {} columns",
-            right.size(),
-            right.size() > 0 ? right[0].size() : 0));
-
-        LOG_INFO(fmt::format("Left table size: {} rows, {} columns",
-            left.size(),
-            left.size() > 0 ? left[0].size() : 0));
-
-        LOG_INFO(fmt::format("Left column: {}", left_col));
-        LOG_INFO(fmt::format("Right column: {}", right_col));
 
         if (build_left) {
             // Build phase.
@@ -148,9 +147,100 @@ struct JoinAlgorithm {
     }
 };
 
+struct GermanJoinAlgorithm {
+    bool                                             build_left;
+    ExecuteResult&                                   left;
+    ExecuteResult&                                   right;
+    ExecuteResult&                                   results;
+    size_t                                           left_col, right_col;
+    const std::vector<std::tuple<size_t, DataType>>& output_attrs;
+
+    template <class T>
+    auto run() {
+        UnchainedHashTable hash_table;
+
+        if (build_left) {
+            // Build phase.
+            hash_table.build(left, left_col);
+            // Probe phase.
+            for (auto& right_record: right) {
+                // Again, iterate on every record and this time our typed-visitor
+                // emplaces the records in the results vector.
+                std::visit(
+                    [&](const auto& key) {
+                        using Tk = std::decay_t<decltype(key)>;
+                        std::vector<uint64_t> values;
+
+                        if constexpr (std::is_same_v<Tk, T>) {
+                            // Probe the hash table with the key from the right record
+                            hash_table.probe(key, values);
+
+                            // If the key is found, process the matching left records.
+                            if (values.size() > 0) {
+                                for (auto left_idx: values) {
+                                    auto&             left_record = left[left_idx];
+                                    std::vector<Data> new_record;
+                                    new_record.reserve(output_attrs.size());
+                                    for (auto [col_idx, _]: output_attrs) {
+                                        if (col_idx < left_record.size()) {
+                                            new_record.emplace_back(left_record[col_idx]);
+                                        } else {
+                                            new_record.emplace_back(
+                                                right_record[col_idx - left_record.size()]);
+                                        }
+                                    }
+                                    results.emplace_back(std::move(new_record));
+                                }
+                            }
+                        } else if constexpr (not std::is_same_v<Tk, std::monostate>) {
+                            throw std::runtime_error("wrong type of field");
+                        }
+                    },
+                    right_record[right_col]);
+            }
+        } else {
+            // Build phase.
+            hash_table.build(right, right_col);
+
+            // Probe phase.
+            for (auto& left_record: left) {
+                std::visit(
+                    [&](const auto& key) {
+                        using Tk = std::decay_t<decltype(key)>;
+                        std::vector<uint64_t> values;
+                        // Probe the hash table with the key from the left record
+                        if constexpr (std::is_same_v<Tk, T>) {
+                            hash_table.probe(key, values);
+                            if (values.size() > 0) {
+                                for (auto right_idx: values) {
+                                    auto&             right_record = right[right_idx];
+                                    std::vector<Data> new_record;
+                                    new_record.reserve(output_attrs.size());
+                                    for (auto [col_idx, _]: output_attrs) {
+                                        if (col_idx < left_record.size()) {
+                                            new_record.emplace_back(left_record[col_idx]);
+                                        } else {
+                                            new_record.emplace_back(
+                                                right_record[col_idx - left_record.size()]);
+                                        }
+                                    }
+                                    results.emplace_back(std::move(new_record));
+                                }
+                            }
+                        } else if constexpr (not std::is_same_v<Tk, std::monostate>) {
+                            throw std::runtime_error("wrong type of field");
+                        }
+                    },
+                    left_record[left_col]);
+            }
+        }
+    }
+};
+
 ExecuteResult execute_hash_join(const Plan&          plan,
     const JoinNode&                                  join,
-    const std::vector<std::tuple<size_t, DataType>>& output_attrs) {
+    const std::vector<std::tuple<size_t, DataType>>& output_attrs,
+    const HashJoinAlgorithm&                         algorithm) {
     auto                           left_idx    = join.left;
     auto                           right_idx   = join.right;
     auto&                          left_node   = plan.nodes[left_idx];
@@ -161,27 +251,56 @@ ExecuteResult execute_hash_join(const Plan&          plan,
     auto                           right       = execute_impl(plan, right_idx);
     std::vector<std::vector<Data>> results;
 
-    JoinAlgorithm join_algorithm{.build_left = join.build_left,
-        .left                                = left,
-        .right                               = right,
-        .results                             = results,
-        .left_col                            = join.left_attr,
-        .right_col                           = join.right_attr,
-        .output_attrs                        = output_attrs};
-    if (join.build_left) {
-        switch (std::get<1>(left_types[join.left_attr])) {
-        case DataType::INT32:   join_algorithm.run<int32_t>(); break;
-        case DataType::INT64:   join_algorithm.run<int64_t>(); break;
-        case DataType::FP64:    join_algorithm.run<double>(); break;
-        case DataType::VARCHAR: join_algorithm.run<std::string>(); break;
+    if (algorithm == HashJoinAlgorithm::Baseline) {
+        BaselineJoinAlgorithm join_algorithm{.build_left = join.build_left,
+            .left                                        = left,
+            .right                                       = right,
+            .results                                     = results,
+            .left_col                                    = join.left_attr,
+            .right_col                                   = join.right_attr,
+            .output_attrs                                = output_attrs};
+        if (join.build_left) {
+            switch (std::get<1>(left_types[join.left_attr])) {
+            case DataType::INT32:   join_algorithm.run<int32_t>(); break;
+            case DataType::INT64:   join_algorithm.run<int64_t>(); break;
+            case DataType::FP64:    join_algorithm.run<double>(); break;
+            case DataType::VARCHAR: join_algorithm.run<std::string>(); break;
+            }
+        } else {
+            switch (std::get<1>(right_types[join.right_attr])) {
+            case DataType::INT32:   join_algorithm.run<int32_t>(); break;
+            case DataType::INT64:   join_algorithm.run<int64_t>(); break;
+            case DataType::FP64:    join_algorithm.run<double>(); break;
+            case DataType::VARCHAR: join_algorithm.run<std::string>(); break;
+            }
         }
+    } else if (algorithm == HashJoinAlgorithm::German) {
+        // German join algorithm
+        GermanJoinAlgorithm german_join_algorithm{.build_left = join.build_left,
+            .left                                             = left,
+            .right                                            = right,
+            .results                                          = results,
+            .left_col                                         = join.left_attr,
+            .right_col                                        = join.right_attr,
+            .output_attrs                                     = output_attrs};
+        if (join.build_left) {
+            switch (std::get<1>(left_types[join.left_attr])) {
+            case DataType::INT32:   german_join_algorithm.run<int32_t>(); break;
+            case DataType::INT64:   german_join_algorithm.run<int64_t>(); break;
+            case DataType::FP64:    german_join_algorithm.run<double>(); break;
+            case DataType::VARCHAR: german_join_algorithm.run<std::string>(); break;
+            }
+        } else {
+            switch (std::get<1>(right_types[join.right_attr])) {
+            case DataType::INT32:   german_join_algorithm.run<int32_t>(); break;
+            case DataType::INT64:   german_join_algorithm.run<int64_t>(); break;
+            case DataType::FP64:    german_join_algorithm.run<double>(); break;
+            case DataType::VARCHAR: german_join_algorithm.run<std::string>(); break;
+            }
+        }
+
     } else {
-        switch (std::get<1>(right_types[join.right_attr])) {
-        case DataType::INT32:   join_algorithm.run<int32_t>(); break;
-        case DataType::INT64:   join_algorithm.run<int64_t>(); break;
-        case DataType::FP64:    join_algorithm.run<double>(); break;
-        case DataType::VARCHAR: join_algorithm.run<std::string>(); break;
-        }
+        throw std::runtime_error("Unknown join algorithm");
     }
 
     return results;
@@ -194,8 +313,10 @@ ExecuteResult execute_scan(const Plan&               plan,
     auto&                          input    = plan.inputs[table_id];
     auto                           table    = Table::from_columnar(input);
     std::vector<std::vector<Data>> results;
+    results.reserve(table.number_rows());
     for (auto& record: table.table()) {
         std::vector<Data> new_record;
+        // Projection.
         new_record.reserve(output_attrs.size());
         for (auto [col_idx, _]: output_attrs) {
             new_record.emplace_back(record[col_idx]);
@@ -211,7 +332,10 @@ ExecuteResult execute_impl(const Plan& plan, size_t node_idx) {
         [&](const auto& value) {
             using T = std::decay_t<decltype(value)>;
             if constexpr (std::is_same_v<T, JoinNode>) {
-                return execute_hash_join(plan, value, node.output_attrs);
+                return execute_hash_join(plan,
+                    value,
+                    node.output_attrs,
+                    HashJoinAlgorithm::German);
             } else {
                 return execute_scan(plan, value, node.output_attrs);
             }

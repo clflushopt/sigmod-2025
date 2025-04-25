@@ -30,7 +30,7 @@ union CPUID {
 };
 
 // Returns true if CPU supports rdtscp (fenced equivalent of rdtsc).
-inline auto hasRdtscp() noexcept -> bool {
+inline auto has_rdtscp() noexcept -> bool {
     return (CPUID(0x80000001).registers.edx >> 27) & 1u;
 }
 
@@ -40,6 +40,6 @@ inline auto hasRdtscp() noexcept -> bool {
 //
 // CRC32 is a SSE4.2 instruction. Support for SSE4.2 instructions is indicated
 // by CPUID Fn0000_0001_ECX[SSE42] = 1
-inline auto hasSse42() noexcept -> bool {
+inline auto has_sse42() noexcept -> bool {
     return (CPUID(0x1).registers.ecx >> 20) & 1u;
 }
