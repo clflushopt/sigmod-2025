@@ -68,9 +68,11 @@ public:
 private:
     // --- Member Variables ---
     std::vector<uint64_t> directory;
-    // UPDATED: Stores pairs of {hash, row_index}
+    // Stores pairs of {hash, row_index}
     std::vector<StoredEntry> tupleStorage;
     size_t                   num_elements = 0;
+    // Precompute bloom fitler tags.
+    uint16_t precalculated_tags[2048];
 
     // --- Hashing & Filtering Utilities (Mostly same as before) ---
     // CRC32 hardware instruction based hash would be ideal here.
