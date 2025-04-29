@@ -1,4 +1,6 @@
+#include "fmt/base.h"
 #include <array>
+#include <chrono>
 #include <fstream>
 #include <memory>
 #include <unordered_map>
@@ -143,6 +145,7 @@ using AliasMapType    = std::unordered_map<std::string, TableEntity>;
 using FilterMapType   = std::unordered_map<TableEntity, std::unique_ptr<Statement>>;
 using JoinGraphType   = std::unordered_map<TableEntity,
       std::unordered_map<TableEntity, std::tuple<std::string, std::string>>>;
+
 using ColumnMapType = std::unordered_map<TableEntity, std::unordered_map<std::string, size_t>>;
 
 bool only_contains_hash_join(const json& node) {
@@ -1329,6 +1332,9 @@ int main(int argc, char* argv[]) {
             output_file << runtime;
             output_file.close();
         }
+
+        fmt::println("All queries succeeded: {}", all_queries_succeeded);
+        fmt::println("Total Runtime in ms: {} ms", runtime / 1000);
 
         // destroy context
         Contest::destroy_context(context);

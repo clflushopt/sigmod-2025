@@ -1,12 +1,6 @@
-#include <cmath>
-#include <cstdint>
+#include "columnar_exec.h"
+#include <hardware__talos.h>
 
-#include <vector>
-#include <unordered_map>
-#include <variant>
-#include <utility>
-
-#include <logger.h>
 #include <plan.h>
 #include <table.h>
 #include <german_table.h>
@@ -344,13 +338,17 @@ ExecuteResult execute_impl(const Plan& plan, size_t node_idx) {
 }
 
 ColumnarTable execute(const Plan& plan, [[maybe_unused]] void* context) {
-    namespace views = ranges::views;
-    auto ret        = execute_impl(plan, plan.root);
-    auto ret_types  = plan.nodes[plan.root].output_attrs
-                   | views::transform([](const auto& v) { return std::get<1>(v); })
-                   | ranges::to<std::vector<DataType>>();
-    Table table{std::move(ret), std::move(ret_types)};
-    return table.to_columnar();
+    // Baseline.
+    //
+    // namespace views = ranges::views;
+    // auto ret        = execute_impl(plan, plan.root);
+    // auto ret_types  = plan.nodes[plan.root].output_attrs
+    //                | views::transform([](const auto& v) { return std::get<1>(v); })
+    //                | ranges::to<std::vector<DataType>>();
+    // Table table{std::move(ret), std::move(ret_types)};
+    // return table.to_columnar();
+    ColumnarExecutor executor;
+    return executor.execute_impl(plan, plan.root);
 }
 
 void* build_context() {
