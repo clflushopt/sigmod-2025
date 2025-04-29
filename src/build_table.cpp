@@ -10,10 +10,10 @@
 template <class Functor>
 class TableParser: public CSVParser {
 public:
-    size_t            row_off_;
     std::vector<Data> last_record_;
     const Attribute*  attributes_data_;
     size_t            attributes_size_;
+    size_t            row_off_;
     Functor           add_record_fn_;
 
     template <class F>
