@@ -6,14 +6,258 @@
 #include <columnar_exec.h>
 #include <cstddef>
 #include <cstdint>
+#include <german_table.h>
+#include <hardware__talos.h>
+#include <mutex>
 #include <plan.h>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 
 using ExecuteResult = std::vector<std::vector<Data>>;
 using OutputAttrs   = std::vector<std::tuple<size_t, DataType>>;
+
+// PartionedHashTable is a vector of unordered maps, where each map represents a
+// a single partition that maps a single key to a vector of row indices.
+template <typename T>
+using PartitionedHashTable = std::vector<std::unordered_map<uint64_t, std::vector<size_t>>>;
+
+// NumPartitions is the number of partitions in the hash table, this is set to the number
+// of cores available on the system.
+constexpr size_t NumPartitions = 32;
+
+// Returns the offset within a page of a value of type T where T is restricted
+// to fixed length types since those are the only ones we expect to be used in
+// the hash join.
+template <typename T>
+constexpr size_t get_fixed_data_offset() {
+    if constexpr (sizeof(T) == 4) {
+        return 4;
+    } else {
+        return 8;
+    }
+}
+
+static inline bool get_bitmap(const uint8_t* bitmap, uint16_t idx) {
+    auto byte_idx = idx / 8;
+    auto bit      = idx % 8;
+    return bitmap[byte_idx] & (1u << bit);
+}
+
+// --- Parallel Build Phase ---
+template <typename T>
+static void build_worker(
+    const std::vector<Page*>& pages_for_thread, // Pages assigned to this thread
+    size_t                    start_row_offset, // Global row index offset for the first page
+    PartitionedHashTable<T>&  ht_partitions,    // Shared partitioned hash table
+    std::vector<std::mutex>&  partition_mutexes // Mutexes for each partition
+) {
+    size_t           current_row = start_row_offset;
+    constexpr size_t data_offset = get_fixed_data_offset<T>();
+    std::hash<T>     hasher; // Hash function object
+
+    for (const auto* page: pages_for_thread) {
+        uint16_t numrows = *reinterpret_cast<const uint16_t*>(page->data);
+        if (numrows == 0) {
+            continue;
+        }
+
+        const T*       values = reinterpret_cast<const T*>(page->data + data_offset);
+        const uint8_t* bitmap =
+            reinterpret_cast<const uint8_t*>(page->data + PAGE_SIZE - (numrows + 7) / 8);
+        size_t value_idx = 0; // Index for packed non-NULL values
+
+        for (uint16_t i = 0; i < numrows; ++i) {
+            bool is_not_null = get_bitmap(bitmap, i);            // Assume get_bitmap exists
+            if (is_not_null) {
+                const T& key      = values[value_idx];           // Get the key
+                size_t   part_idx = hasher(key) % NumPartitions; // Calculate partition index
+
+                // Lock the specific partition and insert
+                std::lock_guard<std::mutex> lock(partition_mutexes[part_idx]);
+                ht_partitions[part_idx][key].emplace_back(current_row);
+
+                value_idx++; // Increment only for non-NULL
+            }
+            current_row++;   // Increment global row index for every slot
+        }
+    }
+}
+
+template <typename T>
+static void hash_join_build_partitioned(const ColumnarTable& table,
+    size_t                                                   join_col,
+    PartitionedHashTable<T>& ht_partitions,    // Output: partitioned hash table
+    std::vector<std::mutex>& partition_mutexes // Output: mutexes (created here)
+) {
+    const auto&  column      = table.columns[join_col];
+    unsigned int num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0) {
+        num_threads = 1; // Fallback
+    }
+
+    ht_partitions.resize(NumPartitions);
+
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+
+    size_t total_pages      = column.pages.size();
+    size_t pages_per_thread = (total_pages + num_threads - 1) / num_threads; // Ceiling division
+    size_t start_page_idx   = 0;
+    size_t accumulated_row_offset = 0; // Track global row offset for page chunks
+
+    // Pre-calculate row offsets for each chunk start (optional but cleaner)
+    std::vector<size_t> page_start_rows(total_pages + 1, 0);
+    for (size_t i = 0; i < total_pages; ++i) {
+        uint16_t numrows       = *reinterpret_cast<const uint16_t*>(column.pages[i]->data);
+        page_start_rows[i + 1] = page_start_rows[i] + numrows;
+    }
+
+
+    for (unsigned int i = 0; i < num_threads; ++i) {
+        size_t end_page_idx = std::min(start_page_idx + pages_per_thread, total_pages);
+        if (start_page_idx >= end_page_idx) {
+            break; // No more pages
+        }
+
+        // Create a sub-vector of page pointers for the thread
+        std::vector<Page*> pages_for_thread(column.pages.begin() + start_page_idx,
+            column.pages.begin() + end_page_idx);
+
+        size_t start_row_for_thread = page_start_rows[start_page_idx];
+
+
+        threads.emplace_back(build_worker<T>,
+            std::move(pages_for_thread), // Pass pages chunk
+            start_row_for_thread,        // Pass starting global row index
+            std::ref(ht_partitions),     // Pass reference to shared partitions
+            std::ref(partition_mutexes)  // Pass reference to shared mutexes
+        );
+
+        start_page_idx = end_page_idx;
+    }
+
+    // Wait for all build threads to complete
+    for (auto& t: threads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+}
+
+// --- Parallel Probe Phase ---
+template <typename T>
+static void probe_worker(const std::vector<Page*>& pages_for_thread,
+    size_t                                         start_row_offset,
+    const PartitionedHashTable<T>&                 ht_partitions, // Read-only access
+    std::vector<std::pair<size_t, size_t>>&        thread_matches // Output for this thread
+) {
+    size_t           current_row = start_row_offset;
+    constexpr size_t data_offset = get_fixed_data_offset<T>();
+    std::hash<T>     hasher;
+
+    for (const auto* page: pages_for_thread) {
+        uint16_t numrows = *reinterpret_cast<const uint16_t*>(page->data);
+        if (numrows == 0) {
+            continue;
+        }
+
+        const T*       values = reinterpret_cast<const T*>(page->data + data_offset);
+        const uint8_t* bitmap =
+            reinterpret_cast<const uint8_t*>(page->data + PAGE_SIZE - (numrows + 7) / 8);
+        size_t value_idx = 0;
+
+        for (uint16_t i = 0; i < numrows; ++i) {
+            bool is_not_null = get_bitmap(bitmap, i); // Assume get_bitmap exists
+            if (is_not_null) {
+                const T& key      = values[value_idx];
+                size_t   part_idx = hasher(key) % NumPartitions;
+
+                // Probe the *specific* partition (no lock needed for read)
+                const auto& partition = ht_partitions[part_idx];
+                auto        it        = partition.find(key);
+
+                if (it != partition.end()) {
+                    // Found matches in the build table partition
+                    for (size_t build_row: it->second) {
+                        thread_matches.emplace_back(current_row, build_row);
+                    }
+                }
+                value_idx++; // Increment only for non-NULL
+            }
+            current_row++;   // Increment global row index
+        }
+    }
+}
+
+template <typename T>
+static void hash_join_probe_partitioned(const ColumnarTable& table,
+    size_t                                                   join_col,
+    const PartitionedHashTable<T>&          ht_partitions, // Input: Pre-built partitions
+    std::vector<std::pair<size_t, size_t>>& matches        // Output: All matches
+) {
+    const auto&  column      = table.columns[join_col];
+    unsigned int num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0) {
+        num_threads = 1;
+    }
+
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+    // Create a vector to hold results from each thread
+    std::vector<std::vector<std::pair<size_t, size_t>>> thread_results(num_threads);
+
+    size_t total_pages      = column.pages.size();
+    size_t pages_per_thread = (total_pages + num_threads - 1) / num_threads;
+    size_t start_page_idx   = 0;
+
+    // Pre-calculate row offsets for each chunk start (same logic as build)
+    std::vector<size_t> page_start_rows(total_pages + 1, 0);
+    for (size_t i = 0; i < total_pages; ++i) {
+        uint16_t numrows       = *reinterpret_cast<const uint16_t*>(column.pages[i]->data);
+        page_start_rows[i + 1] = page_start_rows[i] + numrows;
+    }
+
+    for (unsigned int i = 0; i < num_threads; ++i) {
+        size_t end_page_idx = std::min(start_page_idx + pages_per_thread, total_pages);
+        if (start_page_idx >= end_page_idx) {
+            break;
+        }
+
+        std::vector<Page*> pages_for_thread(column.pages.begin() + start_page_idx,
+            column.pages.begin() + end_page_idx);
+        size_t             start_row_for_thread = page_start_rows[start_page_idx];
+
+
+        threads.emplace_back(probe_worker<T>,
+            std::move(pages_for_thread),
+            start_row_for_thread,
+            std::cref(ht_partitions),   // Pass const reference (read-only)
+            std::ref(thread_results[i]) // Pass reference to thread's result vector
+        );
+        start_page_idx = end_page_idx;
+    }
+
+    // Wait for all probe threads to complete
+    size_t total_matches = 0;
+    for (auto& t: threads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+
+    // Aggregate results from all threads
+    // Pre-calculate total size for efficiency
+    for (const auto& results: thread_results) {
+        total_matches += results.size();
+    }
+    matches.reserve(total_matches); // Reserve space in final vector
+    for (const auto& results: thread_results) {
+        matches.insert(matches.end(), results.begin(), results.end());
+    }
+}
 
 ColumnarTable ColumnarExecutor::execute_impl(const Plan& plan, size_t node_idx) {
     auto& node = plan.nodes[node_idx];
@@ -27,12 +271,6 @@ ColumnarTable ColumnarExecutor::execute_impl(const Plan& plan, size_t node_idx) 
             }
         },
         node.data);
-}
-
-static inline bool get_bitmap(const uint8_t* bitmap, uint16_t idx) {
-    auto byte_idx = idx / 8;
-    auto bit      = idx % 8;
-    return bitmap[byte_idx] & (1u << bit);
 }
 
 template <typename T>
@@ -477,6 +715,10 @@ ColumnarTable ColumnarExecutor::execute_join(const Plan& plan,
         join_col_type = std::get<1>(plan.nodes[right].output_attrs[build_join_col]);
     }
 
+    std::vector<std::mutex>                partition_mutexes(NumPartitions);
+    std::vector<std::pair<size_t, size_t>> matches;
+
+    /*
     switch (join_col_type) {
     case DataType::INT32:
         return execute_join_impl<int32_t>(build_table,
@@ -505,6 +747,68 @@ ColumnarTable ColumnarExecutor::execute_join(const Plan& plan,
             left_result,
             right_result);
 
+    case DataType::VARCHAR:
+    default:
+        throw std::runtime_error(
+            fmt::format("Unsupported data type for join column: {}", DataType::VARCHAR));
+    }
+    */
+
+    switch (join_col_type) {
+    case DataType::INT32: {
+        auto partitioned_hash_table_int32 = PartitionedHashTable<int32_t>(NumPartitions);
+        hash_join_build_partitioned<int32_t>(build_table,
+            build_join_col,
+            std::ref(partitioned_hash_table_int32),
+            partition_mutexes);
+        hash_join_probe_partitioned<int32_t>(probe_table,
+            probe_join_col,
+            std::cref(partitioned_hash_table_int32),
+            matches);
+        ColumnarTable result = build_result_columns(matches,
+            output_attrs,
+            left_result,
+            right_result,
+            build_table.num_rows == left_result.num_rows);
+        // Step 4: Return the result.
+        return result;
+    }
+    case DataType::INT64: {
+        auto partitioned_hash_table_int64 = PartitionedHashTable<int64_t>(NumPartitions);
+        hash_join_build_partitioned<int64_t>(build_table,
+            build_join_col,
+            std::ref(partitioned_hash_table_int64),
+            partition_mutexes);
+        hash_join_probe_partitioned<int64_t>(probe_table,
+            probe_join_col,
+            std::cref(partitioned_hash_table_int64),
+            matches);
+        ColumnarTable result = build_result_columns(matches,
+            output_attrs,
+            left_result,
+            right_result,
+            build_table.num_rows == left_result.num_rows);
+        // Step 4: Return the result.
+        return result;
+    }
+    case DataType::FP64: {
+        auto partitioned_hash_table_double = PartitionedHashTable<double>(NumPartitions);
+        hash_join_build_partitioned<double>(build_table,
+            build_join_col,
+            std::ref(partitioned_hash_table_double),
+            partition_mutexes);
+        hash_join_probe_partitioned<double>(probe_table,
+            probe_join_col,
+            std::cref(partitioned_hash_table_double),
+            matches);
+        ColumnarTable result = build_result_columns(matches,
+            output_attrs,
+            left_result,
+            right_result,
+            build_table.num_rows == left_result.num_rows);
+        // Step 4: Return the result.
+        return result;
+    }
     case DataType::VARCHAR:
     default:
         throw std::runtime_error(
