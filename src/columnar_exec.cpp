@@ -6,9 +6,9 @@
 #include <columnar_exec.h>
 #include <cstddef>
 #include <cstdint>
-#include <german_table.h>
 #include <hardware__talos.h>
 #include <mutex>
+#include <par_german_table.h>
 #include <plan.h>
 #include <string>
 #include <thread>
@@ -54,9 +54,10 @@ static void build_worker(
     PartitionedHashTable<T>&  ht_partitions,    // Shared partitioned hash table
     std::vector<std::mutex>&  partition_mutexes // Mutexes for each partition
 ) {
-    size_t           current_row = start_row_offset;
-    constexpr size_t data_offset = get_fixed_data_offset<T>();
-    std::hash<T>     hasher; // Hash function object
+    size_t                  current_row = start_row_offset;
+    constexpr size_t        data_offset = get_fixed_data_offset<T>();
+    PartitionedHashTable<T> local_partitions(NumPartitions);
+    std::hash<T>            hasher; // Hash function object
 
     for (const auto* page: pages_for_thread) {
         uint16_t numrows = *reinterpret_cast<const uint16_t*>(page->data);
@@ -70,18 +71,31 @@ static void build_worker(
         size_t value_idx = 0; // Index for packed non-NULL values
 
         for (uint16_t i = 0; i < numrows; ++i) {
-            bool is_not_null = get_bitmap(bitmap, i);            // Assume get_bitmap exists
+            bool is_not_null = get_bitmap(bitmap, i);  // Assume get_bitmap exists
             if (is_not_null) {
-                const T& key      = values[value_idx];           // Get the key
-                size_t   part_idx = hasher(key) % NumPartitions; // Calculate partition index
+                const T& key = values[value_idx];      // Get the key
+                size_t   part_idx =
+                    hasher(key) & (NumPartitions - 1); // Calculate partition index
 
-                // Lock the specific partition and insert
-                std::lock_guard<std::mutex> lock(partition_mutexes[part_idx]);
-                ht_partitions[part_idx][key].emplace_back(current_row);
+                // Insert into thread local partition.
+                local_partitions[part_idx][key].emplace_back(current_row);
 
                 value_idx++; // Increment only for non-NULL
             }
             current_row++;   // Increment global row index for every slot
+        }
+    }
+
+    // Merge thread local results into the shared partitioned hash table.
+    for (size_t p_idx = 0; p_idx < NumPartitions; ++p_idx) {
+        if (!local_partitions[p_idx].empty()) {
+            // Acquire lock for the specific global partition.
+            std::lock_guard<std::mutex> lock(partition_mutexes[p_idx]);
+            // Merge local partition into the global partition.
+            auto& partition = ht_partitions[p_idx];
+            for (const auto& [key, rows]: local_partitions[p_idx]) {
+                partition[key].insert(partition[key].end(), rows.begin(), rows.end());
+            }
         }
     }
 }
@@ -94,9 +108,6 @@ static void hash_join_build_partitioned(const ColumnarTable& table,
 ) {
     const auto&  column      = table.columns[join_col];
     unsigned int num_threads = std::thread::hardware_concurrency();
-    if (num_threads == 0) {
-        num_threads = 1; // Fallback
-    }
 
     ht_partitions.resize(NumPartitions);
 
@@ -106,7 +117,6 @@ static void hash_join_build_partitioned(const ColumnarTable& table,
     size_t total_pages      = column.pages.size();
     size_t pages_per_thread = (total_pages + num_threads - 1) / num_threads; // Ceiling division
     size_t start_page_idx   = 0;
-    size_t accumulated_row_offset = 0; // Track global row offset for page chunks
 
     // Pre-calculate row offsets for each chunk start (optional but cleaner)
     std::vector<size_t> page_start_rows(total_pages + 1, 0);
@@ -173,7 +183,7 @@ static void probe_worker(const std::vector<Page*>& pages_for_thread,
             bool is_not_null = get_bitmap(bitmap, i); // Assume get_bitmap exists
             if (is_not_null) {
                 const T& key      = values[value_idx];
-                size_t   part_idx = hasher(key) % NumPartitions;
+                size_t   part_idx = hasher(key) & (NumPartitions - 1);
 
                 // Probe the *specific* partition (no lock needed for read)
                 const auto& partition = ht_partitions[part_idx];
