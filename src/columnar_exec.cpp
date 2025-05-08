@@ -57,14 +57,6 @@ static void build_worker(size_t thread_id,        // Thread ID for pinning
     PartitionedHashTable<T>&    ht_partitions,    // Shared partitioned hash table
     std::vector<std::mutex>&    partition_mutexes // Mutexes for each partition
 ) {
-    // Pin this thread to a core.
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(thread_id, &cpuset);
-    pthread_t thread = pthread_self();
-    pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
-
-
     size_t                  current_row = start_row_offset;
     constexpr size_t        data_offset = get_fixed_data_offset<T>();
     PartitionedHashTable<T> local_partitions(NumPartitions);

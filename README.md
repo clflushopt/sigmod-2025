@@ -133,6 +133,130 @@ user    12m19.108s
 sys     2m47.299s
 ```
 
+Most of the low hanging fruits performance wise are to exploit columnar format and use
+a parallel hash join in this case `std::unordered_map` scores a 20 second total runtime
+replacing it with an off the shelf `flat_hash_map` implementation Abseil-like gets us down
+to 18 seconds on the same machine.
+
+```
+clflushopt@workstation:~/Projects/Experiments/sigmod-2025$ ./build/run plans.json
+Query 1a >>              Runtime: 97 ms - Result correct: true
+Query 1b >>              Runtime: 72 ms - Result correct: true
+Query 1c >>              Runtime: 13 ms - Result correct: true
+Query 1d >>              Runtime: 92 ms - Result correct: true
+Query 2a >>              Runtime: 98 ms - Result correct: true
+Query 2b >>              Runtime: 107 ms - Result correct: true
+Query 2c >>              Runtime: 88 ms - Result correct: true
+Query 2d >>              Runtime: 103 ms - Result correct: true
+Query 3a >>              Runtime: 41 ms - Result correct: true
+Query 3b >>              Runtime: 17 ms - Result correct: true
+Query 3c >>              Runtime: 56 ms - Result correct: true
+Query 4a >>              Runtime: 50 ms - Result correct: true
+Query 4b >>              Runtime: 17 ms - Result correct: true
+Query 4c >>              Runtime: 71 ms - Result correct: true
+Query 5a >>              Runtime: 23 ms - Result correct: true
+Query 5b >>              Runtime: 10 ms - Result correct: true
+Query 5c >>              Runtime: 46 ms - Result correct: true
+Query 6a >>              Runtime: 130 ms - Result correct: true
+Query 6b >>              Runtime: 121 ms - Result correct: true
+Query 6c >>              Runtime: 116 ms - Result correct: true
+Query 6d >>              Runtime: 156 ms - Result correct: true
+Query 6e >>              Runtime: 152 ms - Result correct: true
+Query 6f >>              Runtime: 352 ms - Result correct: true
+Query 7a >>              Runtime: 482 ms - Result correct: true
+Query 7b >>              Runtime: 192 ms - Result correct: true
+Query 7c >>              Runtime: 922 ms - Result correct: true
+Query 8a >>              Runtime: 87 ms - Result correct: true
+Query 8b >>              Runtime: 25 ms - Result correct: true
+Query 8c >>              Runtime: 631 ms - Result correct: true
+Query 8d >>              Runtime: 431 ms - Result correct: true
+Query 9a >>              Runtime: 141 ms - Result correct: true
+Query 9b >>              Runtime: 112 ms - Result correct: true
+Query 9c >>              Runtime: 336 ms - Result correct: true
+Query 9d >>              Runtime: 479 ms - Result correct: true
+Query 10a >>             Runtime: 100 ms - Result correct: true
+Query 10b >>             Runtime: 228 ms - Result correct: true
+Query 10c >>             Runtime: 354 ms - Result correct: true
+Query 11a >>             Runtime: 56 ms - Result correct: true
+Query 11b >>             Runtime: 16 ms - Result correct: true
+Query 11c >>             Runtime: 127 ms - Result correct: true
+Query 11d >>             Runtime: 121 ms - Result correct: true
+Query 12a >>             Runtime: 26 ms - Result correct: true
+Query 12b >>             Runtime: 608 ms - Result correct: true
+Query 12c >>             Runtime: 52 ms - Result correct: true
+Query 13a >>             Runtime: 810 ms - Result correct: true
+Query 13b >>             Runtime: 66 ms - Result correct: true
+Query 13c >>             Runtime: 67 ms - Result correct: true
+Query 13d >>             Runtime: 705 ms - Result correct: true
+Query 14a >>             Runtime: 55 ms - Result correct: true
+Query 14b >>             Runtime: 17 ms - Result correct: true
+Query 14c >>             Runtime: 61 ms - Result correct: true
+Query 15a >>             Runtime: 45 ms - Result correct: true
+Query 15b >>             Runtime: 26 ms - Result correct: true
+Query 15c >>             Runtime: 62 ms - Result correct: true
+Query 15d >>             Runtime: 75 ms - Result correct: true
+Query 16a >>             Runtime: 238 ms - Result correct: true
+Query 16b >>             Runtime: 631 ms - Result correct: true
+Query 16c >>             Runtime: 158 ms - Result correct: true
+Query 16d >>             Runtime: 192 ms - Result correct: true
+Query 17a >>             Runtime: 320 ms - Result correct: true
+Query 17b >>             Runtime: 131 ms - Result correct: true
+Query 17c >>             Runtime: 76 ms - Result correct: true
+Query 17d >>             Runtime: 85 ms - Result correct: true
+Query 17e >>             Runtime: 276 ms - Result correct: true
+Query 17f >>             Runtime: 252 ms - Result correct: true
+Query 18a >>             Runtime: 654 ms - Result correct: true
+Query 18b >>             Runtime: 32 ms - Result correct: true
+Query 18c >>             Runtime: 131 ms - Result correct: true
+Query 19a >>             Runtime: 26 ms - Result correct: true
+Query 19b >>             Runtime: 10 ms - Result correct: true
+Query 19c >>             Runtime: 53 ms - Result correct: true
+Query 19d >>             Runtime: 575 ms - Result correct: true
+Query 20a >>             Runtime: 215 ms - Result correct: true
+Query 20b >>             Runtime: 154 ms - Result correct: true
+Query 20c >>             Runtime: 267 ms - Result correct: true
+Query 21a >>             Runtime: 49 ms - Result correct: true
+Query 21b >>             Runtime: 51 ms - Result correct: true
+Query 21c >>             Runtime: 74 ms - Result correct: true
+Query 22a >>             Runtime: 61 ms - Result correct: true
+Query 22b >>             Runtime: 56 ms - Result correct: true
+Query 22c >>             Runtime: 86 ms - Result correct: true
+Query 22d >>             Runtime: 84 ms - Result correct: true
+Query 23a >>             Runtime: 52 ms - Result correct: true
+Query 23b >>             Runtime: 54 ms - Result correct: true
+Query 23c >>             Runtime: 64 ms - Result correct: true
+Query 24a >>             Runtime: 102 ms - Result correct: true
+Query 24b >>             Runtime: 94 ms - Result correct: true
+Query 25a >>             Runtime: 133 ms - Result correct: true
+Query 25b >>             Runtime: 65 ms - Result correct: true
+Query 25c >>             Runtime: 147 ms - Result correct: true
+Query 26a >>             Runtime: 330 ms - Result correct: true
+Query 26b >>             Runtime: 254 ms - Result correct: true
+Query 26c >>             Runtime: 397 ms - Result correct: true
+Query 27a >>             Runtime: 47 ms - Result correct: true
+Query 27b >>             Runtime: 21 ms - Result correct: true
+Query 27c >>             Runtime: 74 ms - Result correct: true
+Query 28a >>             Runtime: 97 ms - Result correct: true
+Query 28b >>             Runtime: 49 ms - Result correct: true
+Query 28c >>             Runtime: 72 ms - Result correct: true
+Query 29a >>             Runtime: 47 ms - Result correct: true
+Query 29b >>             Runtime: 44 ms - Result correct: true
+Query 29c >>             Runtime: 153 ms - Result correct: true
+Query 30a >>             Runtime: 102 ms - Result correct: true
+Query 30b >>             Runtime: 67 ms - Result correct: true
+Query 30c >>             Runtime: 144 ms - Result correct: true
+Query 31a >>             Runtime: 135 ms - Result correct: true
+Query 31b >>             Runtime: 64 ms - Result correct: true
+Query 31c >>             Runtime: 211 ms - Result correct: true
+Query 32a >>             Runtime: 125 ms - Result correct: true
+Query 32b >>             Runtime: 126 ms - Result correct: true
+Query 33a >>             Runtime: 134 ms - Result correct: true
+Query 33b >>             Runtime: 113 ms - Result correct: true
+Query 33c >>             Runtime: 195 ms - Result correct: true
+All queries succeeded: true
+Total Runtime in ms: 18249 ms    
+```
+
 ## Task
 
 Given the joining pipeline and the pre-filtered input data, your task is to implement an efficient joining algorithm to accelerate the execution time of the joining pipeline. Specifically, you need to implement the following function in `src/execute.cpp`:
