@@ -47,6 +47,19 @@ static inline uint64_t hash64(uint64_t key, uint32_t seed1 = 0, uint32_t seed2 =
     return combined * k;
 }
 
+template <typename T>
+static inline uint64_t crc_hash64(T key) {
+    constexpr uint64_t k     = 0x2545F4914F6CDD1DULL;
+    constexpr uint32_t seed1 = 0xDEADBEEF;
+    constexpr uint32_t seed2 = 0xCAFEBABE;
+    uint32_t           crc1  = __builtin_ia32_crc32si(seed1, static_cast<uint32_t>(key));
+    uint32_t           crc2 =
+        __builtin_ia32_crc32si(seed2, static_cast<uint32_t>(static_cast<uint64_t>(key) >> 32));
+    uint64_t upper    = static_cast<uint64_t>(crc2) << 32;
+    uint64_t combined = crc1 | upper;
+    return combined * k;
+}
+
 // --- Input Data Types (as provided by user) ---
 using Data          = std::variant<int32_t, int64_t, double, std::string, std::monostate>;
 using ExecuteResult = std::vector<std::vector<Data>>;
