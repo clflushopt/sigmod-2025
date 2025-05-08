@@ -18,13 +18,13 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 FetchContent_Declare(
-    abseil
+   absl 
     URL https://github.com/abseil/abseil-cpp/releases/download/20240722.1/abseil-cpp-20240722.1.tar.gz
 )
 
 set(ABSL_PROPAGATE_CXX_STD ON)
 set(ABSL_ENABLE_INSTALL ON)
-FetchContent_MakeAvailable(abseil)
+FetchContent_MakeAvailable(absl)
 
 FetchContent_Declare(
     re2

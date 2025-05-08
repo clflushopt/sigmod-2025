@@ -1,6 +1,5 @@
 #include "attribute.h"
 #include "fmt/base.h"
-#include "range/v3/view/unique.hpp"
 #include "statement.h"
 #include <cassert>
 #include <columnar_exec.h>
@@ -9,20 +8,24 @@
 #include <hardware__talos.h>
 #include <mutex>
 #include <par_german_table.h>
+#include <parallel_hashmap/phmap.h>
 #include <plan.h>
+#include <pthread.h>
 #include <string>
 #include <thread>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 
+using phmap::flat_hash_map;
 using ExecuteResult = std::vector<std::vector<Data>>;
 using OutputAttrs   = std::vector<std::tuple<size_t, DataType>>;
 
 // PartionedHashTable is a vector of unordered maps, where each map represents a
 // a single partition that maps a single key to a vector of row indices.
 template <typename T>
-using PartitionedHashTable = std::vector<std::unordered_map<uint64_t, std::vector<size_t>>>;
+using PartitionedHashTable = std::vector<flat_hash_map<uint64_t, std::vector<size_t>>>;
+
 
 // NumPartitions is the number of partitions in the hash table, this is set to the number
 // of cores available on the system.
@@ -48,12 +51,20 @@ static inline bool get_bitmap(const uint8_t* bitmap, uint16_t idx) {
 
 // --- Parallel Build Phase ---
 template <typename T>
-static void build_worker(
-    const std::vector<Page*>& pages_for_thread, // Pages assigned to this thread
-    size_t                    start_row_offset, // Global row index offset for the first page
-    PartitionedHashTable<T>&  ht_partitions,    // Shared partitioned hash table
-    std::vector<std::mutex>&  partition_mutexes // Mutexes for each partition
+static void build_worker(size_t thread_id,        // Thread ID for pinning
+    const std::vector<Page*>&   pages_for_thread, // Pages assigned to this thread
+    size_t                      start_row_offset, // Global row index offset for the first page
+    PartitionedHashTable<T>&    ht_partitions,    // Shared partitioned hash table
+    std::vector<std::mutex>&    partition_mutexes // Mutexes for each partition
 ) {
+    // Pin this thread to a core.
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(thread_id, &cpuset);
+    pthread_t thread = pthread_self();
+    pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
+
+
     size_t                  current_row = start_row_offset;
     constexpr size_t        data_offset = get_fixed_data_offset<T>();
     PartitionedHashTable<T> local_partitions(NumPartitions);
@@ -138,8 +149,9 @@ static void hash_join_build_partitioned(const ColumnarTable& table,
 
         size_t start_row_for_thread = page_start_rows[start_page_idx];
 
-
+        // Build the thread object and pin it to a core explicitly.
         threads.emplace_back(build_worker<T>,
+            i,                           // Pin to core
             std::move(pages_for_thread), // Pass pages chunk
             start_row_for_thread,        // Pass starting global row index
             std::ref(ht_partitions),     // Pass reference to shared partitions
@@ -159,11 +171,19 @@ static void hash_join_build_partitioned(const ColumnarTable& table,
 
 // --- Parallel Probe Phase ---
 template <typename T>
-static void probe_worker(const std::vector<Page*>& pages_for_thread,
-    size_t                                         start_row_offset,
-    const PartitionedHashTable<T>&                 ht_partitions, // Read-only access
-    std::vector<std::pair<size_t, size_t>>&        thread_matches // Output for this thread
+static void probe_worker(size_t             thread_id, // Thread ID for pinning
+    const std::vector<Page*>&               pages_for_thread,
+    size_t                                  start_row_offset,
+    const PartitionedHashTable<T>&          ht_partitions, // Read-only access
+    std::vector<std::pair<size_t, size_t>>& thread_matches // Output for this thread
 ) {
+    // Pin this thread to a core.
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(thread_id, &cpuset);
+    pthread_t thread = pthread_self();
+    pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
+
     size_t           current_row = start_row_offset;
     constexpr size_t data_offset = get_fixed_data_offset<T>();
     std::hash<T>     hasher;
@@ -242,6 +262,7 @@ static void hash_join_probe_partitioned(const ColumnarTable& table,
 
 
         threads.emplace_back(probe_worker<T>,
+            i, // Pin to core
             std::move(pages_for_thread),
             start_row_for_thread,
             std::cref(ht_partitions),   // Pass const reference (read-only)
@@ -286,7 +307,7 @@ ColumnarTable ColumnarExecutor::execute_impl(const Plan& plan, size_t node_idx) 
 template <typename T>
 static void hash_join_build(const ColumnarTable& table,
     size_t                                       join_col,
-    std::unordered_map<T, std::vector<size_t>>&  ht) {
+    flat_hash_map<T, std::vector<size_t>>&       ht) {
     auto&  column = table.columns[join_col];
     size_t row    = 0;
 
@@ -321,10 +342,10 @@ static void hash_join_build(const ColumnarTable& table,
 }
 
 template <typename T>
-static void hash_join_probe(const ColumnarTable&      table,
-    size_t                                            join_col,
-    const std::unordered_map<T, std::vector<size_t>>& ht,
-    std::vector<std::pair<size_t, size_t>>&           matches) {
+static void hash_join_probe(const ColumnarTable& table,
+    size_t                                       join_col,
+    const flat_hash_map<T, std::vector<size_t>>& ht,
+    std::vector<std::pair<size_t, size_t>>&      matches) {
     auto&  column = table.columns[join_col];
     size_t row    = 0;
 
@@ -653,13 +674,14 @@ static ColumnarTable execute_join_impl(const ColumnarTable& build_table,
     const OutputAttrs&                                      output_attrs,
     const ColumnarTable&                                    left_results,
     const ColumnarTable&                                    right_results) {
-    std::unordered_map<T, std::vector<size_t>> ht;
+    flat_hash_map<T, std::vector<size_t>> ht;
 
     // Step 1: Build the hash table from the build table.
     hash_join_build<T>(build_table, build_join_col, ht);
     // Step 2: Probe the hash table with the probe table.
     std::vector<std::pair<size_t, size_t>> matches;
     hash_join_probe<T>(probe_table, probe_join_col, ht, matches);
+    matches.reserve(build_table.num_rows);
     // Step 3: Build the result columns based on the matches.
     ColumnarTable result = build_result_columns(matches,
         output_attrs,
@@ -727,42 +749,6 @@ ColumnarTable ColumnarExecutor::execute_join(const Plan& plan,
 
     std::vector<std::mutex>                partition_mutexes(NumPartitions);
     std::vector<std::pair<size_t, size_t>> matches;
-
-    /*
-    switch (join_col_type) {
-    case DataType::INT32:
-        return execute_join_impl<int32_t>(build_table,
-            probe_table,
-            build_join_col,
-            probe_join_col,
-            output_attrs,
-            left_result,
-            right_result);
-
-    case DataType::INT64:
-        return execute_join_impl<int64_t>(build_table,
-            probe_table,
-            build_join_col,
-            probe_join_col,
-            output_attrs,
-            left_result,
-            right_result);
-
-    case DataType::FP64:
-        return execute_join_impl<double>(build_table,
-            probe_table,
-            build_join_col,
-            probe_join_col,
-            output_attrs,
-            left_result,
-            right_result);
-
-    case DataType::VARCHAR:
-    default:
-        throw std::runtime_error(
-            fmt::format("Unsupported data type for join column: {}", DataType::VARCHAR));
-    }
-    */
 
     switch (join_col_type) {
     case DataType::INT32: {
