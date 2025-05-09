@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <hardware__talos.h>
 #include <mutex>
-#include <par_german_table.h>
 #include <parallel_hashmap/phmap.h>
 #include <plan.h>
 #include <pthread.h>
