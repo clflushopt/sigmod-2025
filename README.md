@@ -2,6 +2,52 @@
 
 This repository contains my solutions for the SIGMOD Contest 2025.
 
+All timings were recorded on an AMD Zen 5 9950x (16 cores) see `hardware__talos.h`
+for a full description of the hardware capabilities.
+
+```
+All queries succeeded: true
+Total Runtime in ms: 18249 ms
+```
+
+## Approach
+
+The approach was to keep all processing in columnar format unlike what is done in
+the baseline solution with on-demand de-serialization. For the core hash-join I again
+kept it simple, using a parallel fixed-size partitioned implementation of both the build
+and probe phases even with `std::unordered_map` this scored a 27x performance gain getting
+us down to a total 20 second of runtime, I followed this by replacing it with a dense hash-map
+implementation (note that I didn't use the parallel_hashmap implementation).
+
+Initially I implemented the hashmap described in [Simple, Efficient and Robust Hash Tables for Join Processing](https://db.in.tum.de/~birler/papers/hashtable.pdf)
+but because the paper isn't quite clear on some implementation details (I didn't implement the pre-computed directory lookups for e.g)
+the performance was almost the same, so I resorted to using an off the shelf implementation
+instead (note I only spent a couple weekends worth of time on this).
+
+Overall I am quite happy with the current implementation and since the leaderboard was down
+from May 7th I didn't feel like spending more time on this (but I am super eager to see the
+results announced on June's SIGMOD 2025 conference).
+
+Here's a list of avenues I didn't explore that can be worth-while to investigate :
+
+- Work-stealing thread pool: Currently we spawn one thread per partition (the number of partitions is the number of cores)
+  and we join the threads to collect the individual partitions before merging them, instead
+  we could spawn the same number of threads but use smaller partitions that can fit in cache
+  and implement work stealing a la HyPer (this approach is described in the [Morsel-Driven Parallelism](https://db.in.tum.de/~leis/papers/morsels.pdf) paper).
+  Note that I didn't benchmark this on a single socket machine and the paper's system was designed
+  for multi-socket machines but it is worth approaching nonetheless.
+
+- Bloom filters: When building the partitions one can also build a bloom filter to speed-up
+  the probe phase, I didn't look at what the data distribution for the actual joins look like
+  so I am not sure what the gains would be here.
+
+- Radix Joins: The reason I didn't consider Radix Joins is because they are more complicated
+  to implement correctly I also don't know if they are currently used in some popular systems
+  that I could use to benchmark on first.
+
+- Adaptive Joins: In theory we could decide on a different join approach (Sort Merge, Loop Join...) at
+  runtime once we know what the data looks like some could be faster than using a Hash Join.
+
 ## Changes
 
 This is a list of changes (divergences) from the main challenge repository.
